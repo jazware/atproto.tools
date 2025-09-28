@@ -12,7 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@atproto/lexicon": "^0.3.1",
+    "@atproto/lexicon": "^0.5.1",
     "@atproto/syntax": "^0.2.0",
     "@headlessui/react": "2.0.0-alpha.4",
     "@heroicons/react": "^2.1.1",
@@ -24,8 +24,8 @@
     "react-query": "^3.39.3",
     "react-responsive": "^9.0.2",
     "react-router-dom": "^6.22.1",
-    "zod": "^3.22.4",
-    "zod-to-json-schema": "^3.22.4"
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.5"
   },
   "devDependencies": {
     "@atproto/lex-cli": "^0.3.0",
