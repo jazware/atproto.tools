@@ -13,8 +13,6 @@ import (
 
 	_ "net/http/pprof"
 
-	"github.com/ericvolp12/atproto.tools/pkg/bq"
-	"github.com/ericvolp12/atproto.tools/pkg/parq"
 	"github.com/ericvolp12/atproto.tools/pkg/stream"
 	"github.com/ericvolp12/bsky-experiments/pkg/tracing"
 	"github.com/labstack/echo/v4"
@@ -54,10 +52,10 @@ func main() {
 			EnvVars: []string{"LG_DEBUG"},
 		},
 		&cli.StringFlag{
-			Name:    "sqlite-path",
-			Usage:   "path to the sqlite database",
+			Name:    "duckdb-path",
+			Usage:   "path to the DuckDB database",
 			Value:   "/data/looking-glass.db",
-			EnvVars: []string{"LG_SQLITE_PATH"},
+			EnvVars: []string{"LG_DUCKDB_PATH"},
 		},
 		&cli.BoolFlag{
 			Name:    "migrate-db",
@@ -65,38 +63,11 @@ func main() {
 			Value:   true,
 			EnvVars: []string{"LG_MIGRATE_DB"},
 		},
-		&cli.BoolFlag{
-			Name:    "sqlite-persist",
-			Usage:   "enable sqlite persistence",
-			Value:   false,
-			EnvVars: []string{"LG_SQLITE_PERSIST"},
-		},
-		&cli.StringFlag{
-			Name:    "parquet-dir",
-			Usage:   "directory to write parquet files to, disabled if empty",
-			EnvVars: []string{"LG_PARQUET_DIR"},
-		},
 		&cli.DurationFlag{
 			Name:    "evt-record-ttl",
 			Usage:   "time to live for events and records in the DB",
 			Value:   72 * time.Hour,
 			EnvVars: []string{"LG_EVT_RECORD_TTL"},
-		},
-		&cli.StringFlag{
-			Name:    "bigquery-project-id",
-			Usage:   "Google Cloud project ID for BigQuery",
-			EnvVars: []string{"LG_BIGQUERY_PROJECT_ID"},
-		},
-		&cli.StringFlag{
-			Name:    "bigquery-dataset",
-			Usage:   "BigQuery dataset name",
-			EnvVars: []string{"LG_BIGQUERY_DATASET"},
-		},
-		&cli.StringFlag{
-			Name:    "bigquery-table-prefix",
-			Usage:   "BigQuery table name prefix",
-			EnvVars: []string{"LG_BIGQUERY_TABLE_PREFIX"},
-			Value:   "records",
 		},
 		&cli.Int64Flag{
 			Name:    "plc-rate-limit",
@@ -157,55 +128,12 @@ func LookingGlass(cctx *cli.Context) error {
 		}()
 	}
 
-	var bqInstance *bq.BQ
-	var err error
-
-	if cctx.String("bigquery-project-id") != "" {
-		logger.Info("bigquery project id set, starting bigquery client")
-		bqInstance, err = bq.NewBQ(
-			ctx,
-			cctx.String("bigquery-project-id"),
-			cctx.String("bigquery-dataset"),
-			cctx.String("bigquery-table-prefix"),
-			logger,
-		)
-		if err != nil {
-			logger.Error("failed to create bigquery client", "error", err)
-			return err
-		}
-		defer func() {
-			if err := bqInstance.Close(); err != nil {
-				logger.Error("failed to close bigquery client", "error", err)
-			}
-		}()
-	}
-
-	var parqInstance *parq.Parq
-	if cctx.String("parquet-dir") != "" {
-		logger.Info("parquet directory set, starting parquet writer")
-		parqInstance, err = parq.NewParq(
-			logger,
-			cctx.String("parquet-dir"),
-			"records",
-			1_000_000,
-			30*time.Minute,
-		)
-		if err != nil {
-			logger.Error("failed to create parquet writer", "error", err)
-			return err
-		}
-		parqInstance.StartWriter()
-	}
-
 	s, err := stream.NewStream(
 		logger,
 		cctx.String("ws-url"),
-		cctx.String("sqlite-path"),
+		cctx.String("duckdb-path"),
 		cctx.Bool("migrate-db"),
-		cctx.Bool("sqlite-persist"),
 		cctx.Duration("evt-record-ttl"),
-		bqInstance,
-		parqInstance,
 		cctx.Int64("plc-rate-limit"),
 		cctx.Bool("lookup-on-commit"),
 	)
@@ -329,9 +257,6 @@ func LookingGlass(cctx *cli.Context) error {
 	<-livenessCheckerShutdown
 	<-httpServerShutdown
 	<-streamShutdownFinished
-	if parqInstance != nil {
-		parqInstance.Shutdown()
-	}
 	logger.Info("shutdown complete")
 
 	return nil

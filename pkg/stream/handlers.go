@@ -2,6 +2,7 @@ package stream
 
 import (
 	"cmp"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -155,40 +156,88 @@ func (s *Stream) HandleGetRecords(c echo.Context) error {
 		query.Limit = 1000
 	}
 
-	// Query the database
-	var records []Record
-	q := s.reader
+	// Build query
+	sqlQuery := "SELECT id, firehose_seq, repo, collection, r_key, action, raw, created_at FROM records WHERE 1=1"
+	args := []interface{}{}
+
 	if query.DID != nil {
-		q = q.Where("repo = ?", query.DID.String())
+		sqlQuery += " AND repo = ?"
+		args = append(args, query.DID.String())
 	}
 	if query.Collection != nil {
-		q = q.Where("collection = ?", query.Collection.String())
+		sqlQuery += " AND collection = ?"
+		args = append(args, query.Collection.String())
 	}
 	if query.Rkey != nil {
-		q = q.Where("r_key = ?", query.Rkey.String())
+		sqlQuery += " AND r_key = ?"
+		args = append(args, query.Rkey.String())
 	}
 	if query.Seq != nil {
-		q = q.Where("firehose_seq = ?", *query.Seq)
+		sqlQuery += " AND firehose_seq = ?"
+		args = append(args, *query.Seq)
 	}
-	q = q.Order("id DESC").Limit(query.Limit).Find(&records)
 
-	if q.Error != nil {
-		resp.Error = q.Error.Error()
+	sqlQuery += " ORDER BY id DESC LIMIT ?"
+	args = append(args, query.Limit)
+
+	// Query the database
+	rows, err := s.db.Query(sqlQuery, args...)
+	if err != nil {
+		resp.Error = err.Error()
 		return c.JSON(http.StatusInternalServerError, resp)
+	}
+	defer rows.Close()
+
+	var records []Record
+	for rows.Next() {
+		var r Record
+		var rawJSON sql.NullString
+		err := rows.Scan(&r.ID, &r.FirehoseSeq, &r.Repo, &r.Collection, &r.RKey, &r.Action, &rawJSON, &r.CreatedAt)
+		if err != nil {
+			resp.Error = err.Error()
+			return c.JSON(http.StatusInternalServerError, resp)
+		}
+		if rawJSON.Valid {
+			r.Raw = []byte(rawJSON.String)
+		}
+		records = append(records, r)
 	}
 
 	// Query the database for identities
 	var identities []Identity
-
 	var dids []string
 	for _, r := range records {
 		dids = append(dids, r.Repo)
 	}
 
-	q = s.reader.Where("d_id IN ?", dids).Find(&identities)
-	if q.Error != nil {
-		resp.Error = q.Error.Error()
-		return c.JSON(http.StatusInternalServerError, resp)
+	if len(dids) > 0 {
+		// Build IN clause
+		placeholders := ""
+		idArgs := []interface{}{}
+		for i, did := range dids {
+			if i > 0 {
+				placeholders += ", "
+			}
+			placeholders += "?"
+			idArgs = append(idArgs, did)
+		}
+
+		idRows, err := s.db.Query("SELECT d_id, handle, pds, created_at, updated_at FROM identities WHERE d_id IN ("+placeholders+")", idArgs...)
+		if err != nil {
+			resp.Error = err.Error()
+			return c.JSON(http.StatusInternalServerError, resp)
+		}
+		defer idRows.Close()
+
+		for idRows.Next() {
+			var id Identity
+			err := idRows.Scan(&id.DID, &id.Handle, &id.PDS, &id.CreatedAt, &id.UpdatedAt)
+			if err != nil {
+				resp.Error = err.Error()
+				return c.JSON(http.StatusInternalServerError, resp)
+			}
+			identities = append(identities, id)
+		}
 	}
 
 	// Convert the identities to a map
@@ -301,23 +350,47 @@ func (s *Stream) HandleGetEvents(c echo.Context) error {
 		query.Limit = 1000
 	}
 
-	// Query the database
-	var events []Event
-	q := s.reader
+	// Build query
+	sqlQuery := "SELECT firehose_seq, repo, event_type, error, time, since, created_at FROM events WHERE 1=1"
+	args := []interface{}{}
+
 	if query.DID != nil {
-		q = q.Where("repo = ?", query.DID.String())
+		sqlQuery += " AND repo = ?"
+		args = append(args, query.DID.String())
 	}
 	if query.EventType != nil {
-		q = q.Where("event_type = ?", *query.EventType)
+		sqlQuery += " AND event_type = ?"
+		args = append(args, *query.EventType)
 	}
 	if query.Seq != nil {
-		q = q.Where("firehose_seq = ?", *query.Seq)
+		sqlQuery += " AND firehose_seq = ?"
+		args = append(args, *query.Seq)
 	}
-	q = q.Order("firehose_seq DESC").Limit(query.Limit).Find(&events)
 
-	if q.Error != nil {
-		resp.Error = q.Error.Error()
+	sqlQuery += " ORDER BY firehose_seq DESC LIMIT ?"
+	args = append(args, query.Limit)
+
+	// Query the database
+	rows, err := s.db.Query(sqlQuery, args...)
+	if err != nil {
+		resp.Error = err.Error()
 		return c.JSON(http.StatusInternalServerError, resp)
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		var e Event
+		var since sql.NullString
+		err := rows.Scan(&e.FirehoseSeq, &e.Repo, &e.EventType, &e.Error, &e.Time, &since, &e.CreatedAt)
+		if err != nil {
+			resp.Error = err.Error()
+			return c.JSON(http.StatusInternalServerError, resp)
+		}
+		if since.Valid {
+			e.Since = &since.String
+		}
+		events = append(events, e)
 	}
 
 	// Convert the events to JSON
@@ -414,23 +487,43 @@ func (s *Stream) HandleGetIdentities(c echo.Context) error {
 		query.Limit = 1000
 	}
 
-	// Query the database
-	var identities []Identity
-	q := s.reader
+	// Build query
+	sqlQuery := "SELECT d_id, handle, pds, created_at, updated_at FROM identities WHERE 1=1"
+	args := []interface{}{}
+
 	if query.DID != nil {
-		q = q.Where("d_id = ?", query.DID.String())
+		sqlQuery += " AND d_id = ?"
+		args = append(args, query.DID.String())
 	}
 	if query.Handle != nil {
-		q = q.Where("handle = ?", query.Handle.String())
+		sqlQuery += " AND handle = ?"
+		args = append(args, query.Handle.String())
 	}
 	if query.PDS != nil {
-		q = q.Where("pds = ?", *query.PDS)
+		sqlQuery += " AND pds = ?"
+		args = append(args, *query.PDS)
 	}
-	q = q.Order("created_at DESC").Limit(query.Limit).Find(&identities)
 
-	if q.Error != nil {
-		resp.Error = q.Error.Error()
+	sqlQuery += " ORDER BY created_at DESC LIMIT ?"
+	args = append(args, query.Limit)
+
+	// Query the database
+	rows, err := s.db.Query(sqlQuery, args...)
+	if err != nil {
+		resp.Error = err.Error()
 		return c.JSON(http.StatusInternalServerError, resp)
+	}
+	defer rows.Close()
+
+	var identities []Identity
+	for rows.Next() {
+		var id Identity
+		err := rows.Scan(&id.DID, &id.Handle, &id.PDS, &id.CreatedAt, &id.UpdatedAt)
+		if err != nil {
+			resp.Error = err.Error()
+			return c.JSON(http.StatusInternalServerError, resp)
+		}
+		identities = append(identities, id)
 	}
 
 	// Convert the identities to JSON
