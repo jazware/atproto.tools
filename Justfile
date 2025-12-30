@@ -1,7 +1,7 @@
 # Justfile for AT Proto Tools
 
 # Get the current git commit hash
-version := `git rev-parse HEAD | cut -c1-8`
+version := `git rev-parse HEAD | cut -c1-7`
 
 # Default recipe to display available commands
 default:
