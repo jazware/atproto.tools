@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   looking-glass-consumer:
-    image: ghcr.io/ericvolp12/atproto.tools/looking-glass-consumer:${VERSION}
+    image: ghcr.io/jazware/atproto.tools/looking-glass-consumer:${VERSION}
     build:
       context: ../../
       dockerfile: cmd/stream/Dockerfile
